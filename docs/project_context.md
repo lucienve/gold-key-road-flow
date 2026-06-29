@@ -17,7 +17,7 @@ To ensure that the exit node (which lies on the boundary) is not cropped out, a 
 - **Exit Intersection**: The intersection of Gold Key Road and Log Tavern Road. Found dynamically by locating a node that connects to both:
   - an edge with "gold key" in its name attribute
   - an edge with "log tavern" in its name attribute
-- **Snapping**: House coordinates (Point geometries) are snapped directly to the nearest street graph nodes. If the input data contains Polygon geometries (like OSM building footprints), centroids are calculated prior to snapping.
+- **Snapping**: House coordinates (Point geometries) are snapped to road network nodes based on their street address to prevent incorrect routing near parallel roads or intersections. Suffixes (e.g. `DR` -> `DRIVE`, `RD` -> `ROAD`) are normalized for both address points and OpenStreetMap edges. The point is snapped to the nearest node on the matching street; if no street match is found, it falls back to the nearest node on the entire graph. If the input data contains Polygon geometries (like OSM building footprints), centroids are calculated prior to snapping.
 
 ### Routing Algorithm
 - Residents take the shortest physical path by distance (`length` attribute) to the exit.

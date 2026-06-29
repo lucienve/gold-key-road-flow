@@ -9,6 +9,7 @@ from typing import List, Tuple, Any
 import csv
 import json
 import os
+import re
 import requests
 from shapely.geometry import Polygon, Point
 import geopandas as gpd
@@ -17,6 +18,90 @@ import osmnx as ox
 import matplotlib
 import matplotlib.pyplot as plt
 
+
+# Suffix normalization dictionary for mapping address street endings to OSM style
+SUFFIX_MAP = {
+    "DR": "DRIVE",
+    "RD": "ROAD",
+    "LN": "LANE",
+    "CT": "COURT",
+    "TER": "TERRACE",
+    "PL": "PLACE",
+    "ST": "STREET",
+    "AVE": "AVENUE",
+    "AV": "AVENUE",
+    "BLVD": "BOULEVARD",
+    "PKWY": "PARKWAY",
+    "HWY": "HIGHWAY",
+    "WY": "WAY",
+}
+
+
+def normalize_street_name(name: str) -> str:
+    """
+    Normalizes a street name by converting to uppercase, cleaning spaces,
+    removing non-alphanumeric characters, and expanding standard abbreviations.
+
+    Args:
+        name: The raw street name.
+
+    Returns:
+        The normalized street name.
+    """
+    if not name:
+        return ""
+    # Convert to uppercase
+    name = name.strip().upper()
+    # Replace non-alphanumeric with spaces
+    name = re.sub(r"[^A-Z0-9\s]", " ", name)
+    # Collapse multiple spaces
+    name = " ".join(name.split())
+
+    tokens = name.split()
+    if not tokens:
+        return ""
+
+    # Check if last token is an abbreviation to map
+    if tokens[-1] in SUFFIX_MAP:
+        tokens[-1] = SUFFIX_MAP[tokens[-1]]
+
+    return " ".join(tokens)
+
+
+def normalize_street_name_no_space(name: str) -> str:
+    """
+    Normalizes a street name and removes all whitespace. This allows matching
+    names with spacing differences (e.g. "BLUE JAY" vs "BLUEJAY").
+
+    Args:
+        name: The raw street name.
+
+    Returns:
+        The normalized street name without any spaces.
+    """
+    return normalize_street_name(name).replace(" ", "")
+
+
+def extract_street_from_address(address: str) -> str:
+    """
+    Extracts the street name component from a primary address string by
+    removing the leading house/street number if present.
+
+    Args:
+        address: The primary address (e.g. "120 NORTHWYND DR").
+
+    Returns:
+        The street name portion.
+    """
+    if not address:
+        return ""
+    parts = address.split()
+    if len(parts) > 1:
+        # Check if the first token is a house number (numeric or digit-leading)
+        first = parts[0]
+        if first.isdigit() or (first[:-1].isdigit() and first[-1].isalpha()):
+            return " ".join(parts[1:])
+    return address
 
 
 def create_buffered_polygon(
@@ -201,12 +286,60 @@ def find_exit_node(graph: nx.MultiGraph) -> int:
     )
 
 
+def find_matching_street_nodes(
+    graph: nx.MultiGraph, street_name: str
+) -> List[int]:
+    """
+    Finds all nodes in the graph that are endpoints of edges matching the
+    given street name (either exact or partial match).
+
+    Args:
+        graph: The road network graph.
+        street_name: The street name to match.
+
+    Returns:
+        A list of node IDs matching the street name.
+    """
+    norm_s = normalize_street_name(street_name)
+    norm_s_ns = normalize_street_name_no_space(street_name)
+
+    exact_nodes = set()
+    partial_nodes = set()
+
+    for u, v, data in graph.edges(data=True):
+        name_attr = data.get("name")
+        if name_attr is None:
+            continue
+        names = name_attr if isinstance(name_attr, list) else [name_attr]
+        for name in names:
+            if not isinstance(name, str):
+                continue
+            norm_osm = normalize_street_name(name)
+            norm_osm_ns = normalize_street_name_no_space(name)
+
+            if norm_s == norm_osm or norm_s_ns == norm_osm_ns:
+                exact_nodes.add(u)
+                exact_nodes.add(v)
+            elif (
+                norm_s in norm_osm
+                or norm_osm in norm_s
+                or norm_s_ns in norm_osm_ns
+                or norm_osm_ns in norm_s_ns
+            ):
+                partial_nodes.add(u)
+                partial_nodes.add(v)
+
+    nodes = exact_nodes if exact_nodes else partial_nodes
+    return list(nodes)
+
+
 def get_house_nodes(
     graph: nx.MultiGraph, buildings: gpd.GeoDataFrame
 ) -> List[int]:
     """
     Calculates building centroids or uses point geometries and snaps them
-    to the nearest graph nodes.
+    to graph nodes. If 'PrimaryAddress' is present, snaps to nodes associated
+    with that street name; otherwise, snaps to the nearest node globally.
 
     Args:
         graph: The road network graph.
@@ -221,17 +354,33 @@ def get_house_nodes(
     # Check if all geometries are points
     geom_types = buildings.geometry.geom_type.unique()
     if len(geom_types) == 1 and geom_types[0] == "Point":
-        x_coords = buildings.geometry.x.tolist()
-        y_coords = buildings.geometry.y.tolist()
+        points = buildings.geometry.tolist()
     else:
         projected_crs = buildings.estimate_utm_crs()
         centroids = buildings.to_crs(projected_crs).geometry.centroid.to_crs(buildings.crs)
-        x_coords = centroids.x.tolist()
-        y_coords = centroids.y.tolist()
+        points = centroids.tolist()
 
-    # Snap to nearest nodes using OSMnx
-    node_ids = ox.nearest_nodes(graph, X=x_coords, Y=y_coords)
-    return [int(nid) for nid in node_ids]
+    node_ids: List[int] = []
+    has_address = "PrimaryAddress" in buildings.columns
+
+    for idx, point in enumerate(points):
+        snapped_id = None
+        if has_address:
+            addr = buildings.iloc[idx]["PrimaryAddress"]
+            if addr and isinstance(addr, str):
+                street = extract_street_from_address(addr)
+                candidates = find_matching_street_nodes(graph, street)
+                if candidates:
+                    sub_graph = graph.subgraph(candidates)
+                    snapped_id = int(ox.nearest_nodes(sub_graph, X=point.x, Y=point.y))
+
+        # Fallback to nearest node globally
+        if snapped_id is None:
+            snapped_id = int(ox.nearest_nodes(graph, X=point.x, Y=point.y))
+
+        node_ids.append(snapped_id)
+
+    return node_ids
 
 
 def simulate_traffic(

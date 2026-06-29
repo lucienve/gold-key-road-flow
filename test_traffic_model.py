@@ -16,6 +16,9 @@ from traffic_model import (
     simulate_traffic,
     normalize_traffic,
     load_house_locations,
+    normalize_street_name,
+    extract_street_from_address,
+    get_house_nodes,
 )
 
 
@@ -220,3 +223,74 @@ def test_load_house_locations_api_fetch(tmp_path: Path, monkeypatch: Any) -> Non
     gdf_cached = gpd.read_file(str(cache_file))
     assert len(gdf_cached) == 1
     assert gdf_cached.iloc[0]["PrimaryAddress"] == "456 Oak Rd"
+
+
+def test_normalize_street_name() -> None:
+    """
+    Test the normalization of street names.
+    """
+    assert normalize_street_name("Northwynd Dr") == "NORTHWYND DRIVE"
+    assert normalize_street_name("White Deer Rd") == "WHITE DEER ROAD"
+    assert normalize_street_name("Byron Rd.") == "BYRON ROAD"
+    assert normalize_street_name("Birches End Ln") == "BIRCHES END LANE"
+    assert normalize_street_name("Crows Ct") == "CROWS COURT"
+    assert normalize_street_name("") == ""
+
+
+def test_extract_street_from_address() -> None:
+    """
+    Test extracting street name from a full primary address.
+    """
+    assert extract_street_from_address("120 Northwynd Dr") == "Northwynd Dr"
+    assert extract_street_from_address("107 Schlage Rd") == "Schlage Rd"
+    assert extract_street_from_address("NoNumber Rd") == "NoNumber Rd"
+    assert extract_street_from_address("") == ""
+
+
+def test_get_house_nodes_empty() -> None:
+    """
+    Test get_house_nodes on an empty GeoDataFrame.
+    """
+    graph = nx.MultiGraph()
+    buildings = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+    assert not get_house_nodes(graph, buildings)
+
+
+def test_get_house_nodes_snapping() -> None:
+    """
+    Test that get_house_nodes snaps to the street associated with the address.
+    """
+    # Create a small graph:
+    # Node 1 connects to Node 2 (Gold Key Road)
+    # Node 2 connects to Node 3 (Pom Pom Court)
+    graph = nx.MultiGraph()
+    graph.graph["crs"] = "EPSG:4326"
+    # Coordinates for nodes
+    graph.add_node(1, x=-74.9380, y=41.3060)
+    graph.add_node(2, x=-74.9382, y=41.3065)
+    graph.add_node(3, x=-74.9382, y=41.3075)
+
+    graph.add_edge(1, 2, key=0, name="Gold Key Road")
+    graph.add_edge(2, 3, key=0, name="Pom Pom Court")
+
+    # House is closer to Node 3 (Pom Pom Court) but addressed to "155 Gold Key Road"
+    # Point coords: close to Node 3, but we snap to Node 2 (Gold Key Road)
+    house_pos = Point(-74.9382, 41.3074)
+
+    buildings = gpd.GeoDataFrame(
+        [{"PrimaryAddress": "155 Gold Key Road"}],
+        geometry=[house_pos],
+        crs="EPSG:4326"
+    )
+
+    node_ids = get_house_nodes(graph, buildings)
+    assert node_ids == [2]
+
+    # Another house with an unknown street should fall back to the closest node (Node 3)
+    buildings_fallback = gpd.GeoDataFrame(
+        [{"PrimaryAddress": "100 Unknown Rd"}],
+        geometry=[house_pos],
+        crs="EPSG:4326"
+    )
+    node_ids_fallback = get_house_nodes(graph, buildings_fallback)
+    assert node_ids_fallback == [3]
