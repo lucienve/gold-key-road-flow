@@ -118,9 +118,9 @@ def find_exit_node(graph: nx.MultiGraph) -> int:
                 if not isinstance(name, str):
                     continue
                 name_lower = name.lower()
-                if "gold key" in name_lower:
+                if "gold key road" in name_lower:
                     has_gold_key = True
-                if "log tavern" in name_lower:
+                if "log tavern road" in name_lower:
                     has_log_tavern = True
 
         if has_gold_key and has_log_tavern:
@@ -265,26 +265,36 @@ def plot_traffic_heatmap(graph: nx.MultiGraph, filename: str) -> None:
         graph: The road network graph.
         filename: Destination image filepath.
     """
+    # Project to UTM to ensure correct aspect ratio and north-up conformal orientation
+    graph_proj = ox.project_graph(graph)
+
     edge_colors: List[Any] = []
     edge_widths: List[float] = []
-    colormap = matplotlib.colormaps["inferno"]
+    colormap = matplotlib.colormaps["plasma"]
 
-    for _, _, data in graph.edges(data=True):
+    for _, _, data in graph_proj.edges(data=True):
         rel_t = float(data.get("relative_traffic", 0.0))
-        # Scale linewidth from 0.5 to 5.0
-        width = 0.5 + 4.5 * rel_t
-        edge_widths.append(width)
+        color: Any
+        if rel_t == 0.0:
+            # Slate-grey for zero-travel roads
+            color = (0.22, 0.25, 0.3, 1.0)
+            width = 0.8
+        else:
+            # Shift colormap input range to [0.2, 1.0] to avoid dark colors
+            color = colormap(0.2 + 0.8 * rel_t)
+            # Scale linewidth from 1.2 to 6.0 based on relative traffic
+            width = 1.2 + 4.8 * rel_t
 
-        # Colormap mapping
-        color = colormap(rel_t)
+        edge_widths.append(width)
         edge_colors.append(color)
 
-    # Plot using OSMnx
+    # Plot using OSMnx with a deep slate background
     fig, _ = ox.plot_graph(
-        graph,
+        graph_proj,
         edge_color=edge_colors,
         edge_linewidth=edge_widths,
         node_size=0,
+        bgcolor="#0c0f12",
         show=False,
         close=False,
     )
