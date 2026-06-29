@@ -19,6 +19,7 @@ from traffic_model import (
     normalize_street_name,
     extract_street_from_address,
     get_house_nodes,
+    remove_closed_roads,
 )
 
 
@@ -294,3 +295,27 @@ def test_get_house_nodes_snapping() -> None:
     )
     node_ids_fallback = get_house_nodes(graph, buildings_fallback)
     assert node_ids_fallback == [3]
+
+
+def test_remove_closed_roads() -> None:
+    """
+    Test that remove_closed_roads removes the gated/closed road edges.
+    """
+    graph = nx.MultiGraph()
+    graph.add_node(1)
+    graph.add_node(2)
+    graph.add_node(3)
+
+    # Edge 1-2 is "Wood Place" (to be removed)
+    graph.add_edge(1, 2, key=0, name="Wood Place")
+    # Edge 2-3 is "Gold Key Road" (to keep)
+    graph.add_edge(2, 3, key=0, name="Gold Key Road")
+
+    assert graph.has_edge(1, 2)
+    assert graph.has_edge(2, 3)
+
+    remove_closed_roads(graph)
+
+    # Wood Place should be removed, Gold Key Road should remain
+    assert not graph.has_edge(1, 2)
+    assert graph.has_edge(2, 3)

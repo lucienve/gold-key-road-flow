@@ -527,6 +527,33 @@ def plot_traffic_heatmap(graph: nx.MultiGraph, filename: str) -> None:
     plt.close(fig)
 
 
+def remove_closed_roads(graph: nx.MultiGraph) -> None:
+    """
+    Removes edges representing closed or gated roads that cannot carry traffic.
+    Currently overrides:
+    - 'Wood Place': gated and closed to traffic.
+
+    Args:
+        graph: The road network graph.
+    """
+    closed_names = {"wood place"}
+    edges_to_remove = []
+    for u, v, k, data in graph.edges(keys=True, data=True):
+        name_attr = data.get("name")
+        if name_attr:
+            names = name_attr if isinstance(name_attr, list) else [name_attr]
+            if any(
+                isinstance(n, str) and n.lower() in closed_names
+                for n in names
+            ):
+                edges_to_remove.append((u, v, k))
+
+    if edges_to_remove:
+        print(f"Removing {len(edges_to_remove)} edges for locally overridden closed roads...")
+        for u, v, k in edges_to_remove:
+            graph.remove_edge(u, v, k)
+
+
 def main() -> None:
     """
     Main execution flow for downloading data, running the model,
@@ -556,6 +583,7 @@ def main() -> None:
     print("Downloading street network from OpenStreetMap...")
     dir_graph = download_drive_graph(buffered_poly)
     graph = convert_to_undirected(dir_graph)
+    remove_closed_roads(graph)
 
     print("Loading house locations...")
     buildings = load_house_locations(buffered_poly)
