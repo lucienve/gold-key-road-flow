@@ -29,6 +29,7 @@ To ensure that the exit node (which lies on the boundary) is not cropped out, a 
 - Traffic volume is normalized to relative volume: $volume / max\_volume$ (0.0 to 1.0).
 - Output products:
   - `output/traffic_map.png`: Heatmap visualization of relative traffic.
+  - `output/house_connections.png`: Map visualization showing house locations (points/squares) and their snapped connection paths to the road network.
   - `output/traffic_volumes.csv`: Detailed CSV showing traffic volume and relative traffic per road segment.
 
 ## Project Structure

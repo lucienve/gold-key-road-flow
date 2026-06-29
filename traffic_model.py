@@ -17,6 +17,7 @@ import networkx as nx
 import osmnx as ox
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 
 
 # Suffix normalization dictionary for mapping address street endings to OSM style
@@ -527,6 +528,106 @@ def plot_traffic_heatmap(graph: nx.MultiGraph, filename: str) -> None:
     plt.close(fig)
 
 
+def _build_connection_lines(
+    points: List[Point],
+    house_nodes: List[int],
+    graph_proj: nx.MultiGraph,
+) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """
+    Builds segment coordinate pairs for house connection lines.
+
+    Args:
+        points: List of shapely Point objects representing house locations.
+        house_nodes: List of snapped node IDs.
+        graph_proj: Projected road network graph.
+
+    Returns:
+        A list of coordinate pairs representing connection lines.
+    """
+    lines = []
+    for idx, geom in enumerate(points):
+        if idx >= len(house_nodes):
+            break
+        node_id = house_nodes[idx]
+        if node_id in graph_proj.nodes:
+            node_data = graph_proj.nodes[node_id]
+            lines.append(((geom.x, geom.y), (node_data["x"], node_data["y"])))
+    return lines
+
+
+def plot_house_connections(
+    graph: nx.MultiGraph,
+    buildings: gpd.GeoDataFrame,
+    house_nodes: List[int],
+    filename: str,
+) -> None:
+    """
+    Generates a map visualization showing house locations connected to
+    their snapped road nodes and saves it as an image.
+
+    Args:
+        graph: The road network graph.
+        buildings: GeoDataFrame containing the house address points.
+        house_nodes: List of snapped node IDs corresponding to each house.
+        filename: Destination image filepath.
+    """
+    if buildings.empty or not house_nodes:
+        print("No house locations to plot connections for.")
+        return
+
+    # Project the graph to UTM to ensure correct aspect ratio
+    graph_proj = ox.project_graph(graph)
+
+    # Project buildings to the same CRS
+    buildings_proj = buildings.to_crs(graph_proj.graph["crs"])
+
+    # Plot road network using OSMnx with a deep slate background
+    fig, ax = ox.plot_graph(
+        graph_proj,
+        edge_color="#2c3238",  # Slate-grey/dark-grey for roads
+        edge_linewidth=1.0,
+        node_size=0,
+        bgcolor="#0c0f12",  # Sleek dark background
+        show=False,
+        close=False,
+    )
+
+    # Extract coordinates based on geometry type
+    if (buildings_proj.geometry.geom_type == "Point").all():
+        points = buildings_proj.geometry.tolist()
+    else:
+        points = buildings_proj.geometry.centroid.tolist()
+
+    # Build connection lines between each house and its snapped road node
+    lines = _build_connection_lines(points, house_nodes, graph_proj)
+
+    if lines:
+        ax.add_collection(
+            LineCollection(
+                lines,
+                colors="#ffffff",
+                linestyles="--",
+                linewidths=0.5,
+                alpha=0.4,
+                zorder=1,
+            )
+        )
+
+    # Plot houses as small squares/rectangles
+    ax.scatter(
+        [pt.x for pt in points],
+        [pt.y for pt in points],
+        color="#ff6b6b",  # Vibrant coral/red
+        s=8,
+        marker="s",
+        label="House Locations",
+        zorder=2,
+    )
+
+    fig.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def remove_closed_roads(graph: nx.MultiGraph) -> None:
     """
     Removes edges representing closed or gated roads that cannot carry traffic.
@@ -609,6 +710,14 @@ def main() -> None:
 
     print("Saving traffic heatmap to output/traffic_map.png...")
     plot_traffic_heatmap(graph, os.path.join("output", "traffic_map.png"))
+
+    print("Saving house connection visualization to output/house_connections.png...")
+    plot_house_connections(
+        graph,
+        buildings,
+        house_nodes,
+        os.path.join("output", "house_connections.png"),
+    )
 
     print("Execution complete. Outputs generated successfully.")
 

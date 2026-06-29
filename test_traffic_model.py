@@ -20,6 +20,7 @@ from traffic_model import (
     extract_street_from_address,
     get_house_nodes,
     remove_closed_roads,
+    plot_house_connections,
 )
 
 
@@ -319,3 +320,29 @@ def test_remove_closed_roads() -> None:
     # Wood Place should be removed, Gold Key Road should remain
     assert not graph.has_edge(1, 2)
     assert graph.has_edge(2, 3)
+
+
+def test_plot_house_connections(tmp_path: Path) -> None:
+    """
+    Test generating the house snapping/connections map.
+    """
+    graph = nx.MultiGraph()
+    graph.graph["crs"] = "EPSG:4326"
+    # Create simple road segment
+    graph.add_node(1, x=-74.9380, y=41.3060)
+    graph.add_node(2, x=-74.9382, y=41.3065)
+    graph.add_edge(1, 2, key=0, name="Gold Key Road")
+
+    # A mock house point close to Node 2
+    buildings = gpd.GeoDataFrame(
+        [{"PrimaryAddress": "155 Gold Key Road"}],
+        geometry=[Point(-74.9382, 41.3065)],
+        crs="EPSG:4326"
+    )
+    house_nodes = [2]
+
+    filename = tmp_path / "house_connections.png"
+    plot_house_connections(graph, buildings, house_nodes, str(filename))
+
+    assert filename.exists()
+    assert filename.stat().st_size > 0
