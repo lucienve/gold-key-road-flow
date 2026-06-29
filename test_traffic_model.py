@@ -2,16 +2,20 @@
 Unit tests for the Gold Key neighborhood traffic simulation model.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Any
+from pathlib import Path
 import pytest
+import requests
+import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, Point
 
 from traffic_model import (
     create_buffered_polygon,
     find_exit_node,
     simulate_traffic,
     normalize_traffic,
+    load_house_locations,
 )
 
 
@@ -137,3 +141,82 @@ def test_normalize_traffic() -> None:
     assert max_vol == 10.0
     assert graph[1][2][0]["relative_traffic"] == 1.0
     assert graph[2][3][0]["relative_traffic"] == 0.4
+
+
+def test_load_house_locations_from_cache(tmp_path: Path) -> None:
+    """
+    Test loading house locations from a cached GeoJSON file.
+    """
+    # Create dummy GeoJSON
+    gdf_dummy = gpd.GeoDataFrame(
+        [{"OBJECTID": 1, "SiteType": "R1", "PrimaryAddress": "123 Main St"}],
+        geometry=[Point(-74.9, 41.3)],
+        crs="EPSG:4326"
+    )
+    cache_file = tmp_path / "cache.geojson"
+    gdf_dummy.to_file(str(cache_file), driver="GeoJSON")
+
+    poly = Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])
+    gdf_loaded = load_house_locations(poly, cache_path=str(cache_file))
+
+    assert len(gdf_loaded) == 1
+    assert gdf_loaded.iloc[0]["PrimaryAddress"] == "123 Main St"
+
+
+def test_load_house_locations_api_fetch(tmp_path: Path, monkeypatch: Any) -> None:
+    """
+    Test fetching house locations from the API when cache doesn't exist.
+    """
+    # Mock API response
+    mock_response_data = {
+        "features": [
+            {
+                "attributes": {"OBJECTID": 2, "SiteType": "R1", "PrimaryAddress": "456 Oak Rd"},
+                "geometry": {"x": -74.95, "y": 41.31}
+            }
+        ]
+    }
+
+    class MockResponse:
+        """
+        Mock class for requests Response.
+        """
+        def __init__(self, data: Any) -> None:
+            """
+            Initialize MockResponse.
+            """
+            self._data = data
+
+        def raise_for_status(self) -> None:
+            """
+            Mock raise_for_status.
+            """
+
+        def json(self) -> Any:
+            """
+            Mock json response.
+            """
+            return self._data
+
+    def mock_get(_url: str, _params: Any = None, **_kwargs: Any) -> MockResponse:
+        """
+        Mock requests.get method.
+        """
+        return MockResponse(mock_response_data)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    poly = Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])
+    cache_file = tmp_path / "fetched.geojson"
+
+    assert not cache_file.exists()
+    gdf = load_house_locations(poly, cache_path=str(cache_file))
+
+    assert len(gdf) == 1
+    assert gdf.iloc[0]["PrimaryAddress"] == "456 Oak Rd"
+    assert cache_file.exists()
+
+    # Read it back to verify file contents
+    gdf_cached = gpd.read_file(str(cache_file))
+    assert len(gdf_cached) == 1
+    assert gdf_cached.iloc[0]["PrimaryAddress"] == "456 Oak Rd"

@@ -11,12 +11,13 @@ The neighborhood boundary is defined by a 15-point coordinate polygon:
 To ensure that the exit node (which lies on the boundary) is not cropped out, a spatial buffer of `0.001` degrees is applied to the polygon before querying OpenStreetMap.
 
 ### Ingestion & Spatial Setup
-- **OSMnx (>=2.0.0)**: Used to download the drivable road network (`drive`) and fetch building features within the buffered neighborhood boundary.
+- **OSMnx (>=2.0.0)**: Used to download the drivable road network (`drive`).
+- **Pike County GIS API Integration**: House locations are retrieved from the Pike County Address Points MapServer layer 1. To optimize performance and prevent repeated network requests, the fetched GeoJSON data is cached locally in `cache/gis_address_points.geojson`.
 - **Conversion to Undirected**: OSMnx road networks are directed by default. We convert it to an undirected MultiGraph via `ox.convert.to_undirected` to treat roads as two-way.
 - **Exit Intersection**: The intersection of Gold Key Road and Log Tavern Road. Found dynamically by locating a node that connects to both:
   - an edge with "gold key" in its name attribute
   - an edge with "log tavern" in its name attribute
-- **Snapping**: Building centroids are snapped to the nearest street graph nodes.
+- **Snapping**: House coordinates (Point geometries) are snapped directly to the nearest street graph nodes. If the input data contains Polygon geometries (like OSM building footprints), centroids are calculated prior to snapping.
 
 ### Routing Algorithm
 - Residents take the shortest physical path by distance (`length` attribute) to the exit.

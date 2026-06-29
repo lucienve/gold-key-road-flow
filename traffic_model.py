@@ -7,8 +7,10 @@ trips from homes to the neighborhood exit.
 
 from typing import List, Tuple, Any
 import csv
+import json
 import os
-from shapely.geometry import Polygon
+import requests
+from shapely.geometry import Polygon, Point
 import geopandas as gpd
 import networkx as nx
 import osmnx as ox
@@ -69,20 +71,87 @@ def convert_to_undirected(graph: nx.MultiDiGraph) -> nx.MultiGraph:
     return undirected_graph
 
 
-def download_buildings(polygon: Polygon) -> gpd.GeoDataFrame:
+def load_house_locations(
+    polygon: Polygon, cache_path: str = "cache/gis_address_points.geojson"
+) -> gpd.GeoDataFrame:
     """
-    Downloads building footprints within the polygon.
+    Loads house locations within the polygon. First checks if a cached GeoJSON
+    file exists. If not, fetches the data from the Pike County GIS API,
+    saves it to the cache file, and returns it.
 
     Args:
         polygon: Bounding polygon.
+        cache_path: Path to the cached GeoJSON file.
 
     Returns:
-        A GeoDataFrame containing the building footprints.
+        A GeoDataFrame containing the house address points.
     """
-    gdf = ox.features_from_polygon(polygon, tags={"building": True})
-    if not isinstance(gdf, gpd.GeoDataFrame):
-        raise TypeError("OSMnx did not return a GeoDataFrame")
-    print(f"Number of buildings discovered in the polygon: {len(gdf)}")
+    if os.path.exists(cache_path):
+        gdf = gpd.read_file(cache_path)
+        print(f"Loaded {len(gdf)} address points from cache: {cache_path}")
+        return gdf
+
+    print("Fetching address points from Pike County GIS API...")
+    features: List[dict] = []
+    offset = 0
+
+    while True:
+        try:
+            url = (
+                "https://gis.pikepa.org/arcgis/rest/services/"
+                "PikeCo_AddressPoints/MapServer/1/query"
+            )
+            resp = requests.get(
+                url,
+                params={
+                    "where": "SiteType = 'R1'",
+                    "geometry": json.dumps({
+                        "rings": [list(polygon.exterior.coords)],
+                        "spatialReference": {"wkid": 4326}
+                    }),
+                    "geometryType": "esriGeometryPolygon",
+                    "inSR": "4326",
+                    "spatialRel": "esriSpatialRelIntersects",
+                    "outSR": "4326",
+                    "outFields": "OBJECTID,SiteType,PrimaryAddress",
+                    "returnGeometry": "true",
+                    "resultOffset": str(offset),
+                    "resultRecordCount": "1000",
+                    "f": "json"
+                },
+                verify=True,
+                timeout=15
+            )
+            resp.raise_for_status()
+            batch = resp.json().get("features", [])
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to query Pike County GIS API: {e}") from e
+
+        if not batch:
+            break
+        features.extend(batch)
+        if len(batch) < 1000:
+            break
+        offset += len(batch)
+
+    print(f"Retrieved {len(features)} residential address points from Pike County GIS.")
+
+    # Convert features to a GeoDataFrame using list comprehensions to reduce local variables
+    valid_feats = [
+        f for f in features
+        if f.get("geometry") and "x" in f["geometry"] and "y" in f["geometry"]
+    ]
+    gdf = gpd.GeoDataFrame(
+        [f.get("attributes", {}) for f in valid_feats],
+        geometry=[Point(f["geometry"]["x"], f["geometry"]["y"]) for f in valid_feats],
+        crs="EPSG:4326"
+    )
+
+    # Create the cache directory if it doesn't exist
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    gdf.to_file(cache_path, driver="GeoJSON")
+    print(f"Saved {len(gdf)} address points to cache: {cache_path}")
+
     return gdf
 
 
@@ -136,11 +205,12 @@ def get_house_nodes(
     graph: nx.MultiGraph, buildings: gpd.GeoDataFrame
 ) -> List[int]:
     """
-    Calculates building centroids and snaps them to the nearest graph nodes.
+    Calculates building centroids or uses point geometries and snaps them
+    to the nearest graph nodes.
 
     Args:
         graph: The road network graph.
-        buildings: GeoDataFrame of building footprints.
+        buildings: GeoDataFrame of building footprints or address points.
 
     Returns:
         List of snapped node IDs corresponding to each house.
@@ -148,10 +218,16 @@ def get_house_nodes(
     if buildings.empty:
         return []
 
-    projected_crs = buildings.estimate_utm_crs()
-    centroids = buildings.to_crs(projected_crs).geometry.centroid.to_crs(buildings.crs)
-    x_coords = centroids.x.tolist()
-    y_coords = centroids.y.tolist()
+    # Check if all geometries are points
+    geom_types = buildings.geometry.geom_type.unique()
+    if len(geom_types) == 1 and geom_types[0] == "Point":
+        x_coords = buildings.geometry.x.tolist()
+        y_coords = buildings.geometry.y.tolist()
+    else:
+        projected_crs = buildings.estimate_utm_crs()
+        centroids = buildings.to_crs(projected_crs).geometry.centroid.to_crs(buildings.crs)
+        x_coords = centroids.x.tolist()
+        y_coords = centroids.y.tolist()
 
     # Snap to nearest nodes using OSMnx
     node_ids = ox.nearest_nodes(graph, X=x_coords, Y=y_coords)
@@ -332,13 +408,13 @@ def main() -> None:
     dir_graph = download_drive_graph(buffered_poly)
     graph = convert_to_undirected(dir_graph)
 
-    print("Downloading building footprints from OpenStreetMap...")
-    buildings = download_buildings(buffered_poly)
+    print("Loading house locations...")
+    buildings = load_house_locations(buffered_poly)
 
     print("Identifying exit node...")
     exit_node = find_exit_node(graph)
 
-    print("Snapping building footprints to nearest road nodes...")
+    print("Snapping house locations to nearest road nodes...")
     house_nodes = get_house_nodes(graph, buildings)
 
     print("Running traffic simulation...")
