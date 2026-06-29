@@ -1,0 +1,26 @@
+# Python virtual environment
+.venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing and type checking cache
+.pytest_cache/
+.mypy_cache/
+
+# OSMnx Cache
+cache/
+
+# Project configuration and IDE settings
+.agents
+.markdownlint.json
+.prettierrc
+
+# Editor backups
+*~
+*.swp
+
+# Simulation outputs
+output/
