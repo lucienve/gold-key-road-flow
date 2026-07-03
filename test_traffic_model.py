@@ -300,16 +300,17 @@ def test_get_house_nodes_snapping() -> None:
 
 def test_remove_closed_roads() -> None:
     """
-    Test that remove_closed_roads removes the gated/closed road edges.
+    Test that remove_closed_roads removes the gated/restricted nodes and their edges.
     """
     graph = nx.MultiGraph()
-    graph.add_node(1)
+    # Node 1 is gated, Node 2 and Node 3 are not
+    graph.add_node(1, barrier="gate")
     graph.add_node(2)
     graph.add_node(3)
 
-    # Edge 1-2 is "Wood Place" (to be removed)
+    # Edge 1-2 connects to a gated node (should be removed when node 1 is removed)
     graph.add_edge(1, 2, key=0, name="Wood Place")
-    # Edge 2-3 is "Gold Key Road" (to keep)
+    # Edge 2-3 is a regular road (should be kept)
     graph.add_edge(2, 3, key=0, name="Gold Key Road")
 
     assert graph.has_edge(1, 2)
@@ -317,7 +318,8 @@ def test_remove_closed_roads() -> None:
 
     remove_closed_roads(graph)
 
-    # Wood Place should be removed, Gold Key Road should remain
+    # Gated node 1 and its incident edge 1-2 should be removed, while edge 2-3 remains
+    assert not graph.has_node(1)
     assert not graph.has_edge(1, 2)
     assert graph.has_edge(2, 3)
 

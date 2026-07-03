@@ -135,10 +135,23 @@ def download_drive_graph(polygon: Polygon) -> nx.MultiDiGraph:
     Returns:
         A NetworkX MultiDiGraph representing the road network.
     """
-    graph = ox.graph_from_polygon(polygon, network_type="drive")
+    # Ensure OSMnx parses access and barrier tags on both nodes and ways
+    for tag in ["access", "barrier"]:
+        if tag not in ox.settings.useful_tags_node:
+            ox.settings.useful_tags_node.append(tag)
+        if tag not in ox.settings.useful_tags_way:
+            ox.settings.useful_tags_way.append(tag)
+
+    # Download graph without simplifying to preserve intermediate nodes with barriers
+    graph = ox.graph_from_polygon(polygon, network_type="drive", simplify=False)
     if not isinstance(graph, nx.MultiDiGraph):
         raise TypeError("OSMnx did not return a MultiDiGraph")
-    return graph
+
+    # Simplify the graph while explicitly preserving barrier nodes (e.g. gates)
+    simplified_graph = ox.simplify_graph(graph, node_attrs_include=["barrier"])
+    if not isinstance(simplified_graph, nx.MultiDiGraph):
+        raise TypeError("OSMnx simplification did not return a MultiDiGraph")
+    return simplified_graph
 
 
 def convert_to_undirected(graph: nx.MultiDiGraph) -> nx.MultiGraph:
@@ -630,29 +643,37 @@ def plot_house_connections(
 
 def remove_closed_roads(graph: nx.MultiGraph) -> None:
     """
-    Removes edges representing closed or gated roads that cannot carry traffic.
-    Currently overrides:
-    - 'Wood Place': gated and closed to traffic.
+    Removes nodes/edges representing closed or gated roads that cannot carry
+    traffic by identifying OSM barrier or access restrictions on graph nodes.
 
     Args:
         graph: The road network graph.
     """
-    closed_names = {"wood place"}
-    edges_to_remove = []
-    for u, v, k, data in graph.edges(keys=True, data=True):
-        name_attr = data.get("name")
-        if name_attr:
-            names = name_attr if isinstance(name_attr, list) else [name_attr]
-            if any(
-                isinstance(n, str) and n.lower() in closed_names
-                for n in names
-            ):
-                edges_to_remove.append((u, v, k))
+    nodes_to_remove = []
+    for node, data in graph.nodes(data=True):
+        barrier = data.get("barrier")
+        access = data.get("access")
 
-    if edges_to_remove:
-        print(f"Removing {len(edges_to_remove)} edges for locally overridden closed roads...")
-        for u, v, k in edges_to_remove:
-            graph.remove_edge(u, v, k)
+        # Check if node is gated/blocked or restricted to private use only
+        if barrier == "gate" or access in ["private", "no"]:
+            nodes_to_remove.append(node)
+
+    if nodes_to_remove:
+        print(f"Removing {len(nodes_to_remove)} gated/restricted nodes from the network...")
+        for node in nodes_to_remove:
+            # Print affected roads for log visibility
+            incident_edges = list(graph.edges(node, data=True))
+            street_names = set()
+            for _, _, data in incident_edges:
+                name_attr = data.get("name")
+                if name_attr:
+                    names = name_attr if isinstance(name_attr, list) else [name_attr]
+                    street_names.update(names)
+            print(
+                f"Removing Node {node} (gated/restricted) "
+                f"affecting roads: {', '.join(street_names)}"
+            )
+            graph.remove_node(node)
 
 
 def main() -> None:
