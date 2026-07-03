@@ -363,57 +363,90 @@ def find_matching_street_edges(
     return exact_edges if exact_edges else partial_edges
 
 
+def _snap_house_to_edge(
+    graph_proj: nx.MultiGraph,
+    point: Any,
+    addr: Optional[str]
+) -> Tuple[RoadEdge, float]:
+    """
+    Snaps a single house point to the nearest road edge and calculates distance in feet.
+    """
+    snapped_edge = None
+    if addr and isinstance(addr, str):
+        street = extract_street_from_address(addr)
+        candidates = find_matching_street_edges(graph_proj, street)
+        if candidates:
+            sub_graph = graph_proj.edge_subgraph(candidates)
+            res = ox.nearest_edges(sub_graph, X=point.x, Y=point.y)
+            snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
+
+    # Fallback to nearest edge globally
+    if snapped_edge is None:
+        res = ox.nearest_edges(graph_proj, X=point.x, Y=point.y)
+        snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
+
+    # Calculate distance to snapped edge
+    edge_data = graph_proj.edges[snapped_edge.u, snapped_edge.v, snapped_edge.key]
+    if "geometry" in edge_data:
+        edge_geom = edge_data["geometry"]
+    else:
+        edge_geom = LineString([
+            (graph_proj.nodes[snapped_edge.u]["x"], graph_proj.nodes[snapped_edge.u]["y"]),
+            (graph_proj.nodes[snapped_edge.v]["x"], graph_proj.nodes[snapped_edge.v]["y"])
+        ])
+
+    snapped_pt = edge_geom.interpolate(edge_geom.project(point))
+    dist_m = point.distance(snapped_pt)
+    dist_ft = dist_m / 0.3048
+
+    return snapped_edge, dist_ft
+
+
 def get_house_edges(
-    graph: nx.MultiGraph, buildings: gpd.GeoDataFrame
-) -> List[RoadEdge]:
+    graph: nx.MultiGraph, buildings: gpd.GeoDataFrame, max_distance_ft: float = 500.0
+) -> Tuple[List[RoadEdge], gpd.GeoDataFrame]:
     """
     Calculates building centroids or uses point geometries and snaps them
-    to graph edges. If 'PrimaryAddress' is present, snaps to edges associated
-    with that street name; otherwise, snaps to the nearest edge globally.
+    to graph edges. Filters out houses whose snapped distance to the road network
+    exceeds max_distance_ft (outliers).
 
     Args:
         graph: The road network graph.
         buildings: GeoDataFrame of building footprints or address points.
+        max_distance_ft: Maximum allowed connection distance in feet.
 
     Returns:
-        List of snapped RoadEdge NamedTuples corresponding to each house.
+        A tuple containing:
+          - List of snapped RoadEdge NamedTuples corresponding to each kept house.
+          - GeoDataFrame containing only the kept houses.
     """
     if buildings.empty:
-        return []
+        return [], buildings
 
-    # Check if all geometries are points
-    if (buildings.geometry.geom_type == "Point").all():
-        points = buildings.geometry.tolist()
+    # Project to UTM for accurate distance calculation
+    graph_proj = ox.project_graph(graph)
+    buildings_proj = buildings.to_crs(graph_proj.graph["crs"])
+
+    # Extract coordinates based on geometry type
+    if (buildings_proj.geometry.geom_type == "Point").all():
+        points = buildings_proj.geometry.tolist()
     else:
-        points = (
-            buildings.to_crs(buildings.estimate_utm_crs())
-            .geometry.centroid.to_crs(buildings.crs)
-            .tolist()
-        )
+        points = buildings_proj.geometry.centroid.tolist()
 
-    edge_ids: List[RoadEdge] = []
+    kept_edges: List[RoadEdge] = []
+    kept_indices: List[int] = []
     has_address = "PrimaryAddress" in buildings.columns
 
     for idx, point in enumerate(points):
-        snapped_edge = None
-        if has_address:
-            addr = buildings.iloc[idx]["PrimaryAddress"]
-            if addr and isinstance(addr, str):
-                street = extract_street_from_address(addr)
-                candidates = find_matching_street_edges(graph, street)
-                if candidates:
-                    sub_graph = graph.edge_subgraph(candidates)
-                    res = ox.nearest_edges(sub_graph, X=point.x, Y=point.y)
-                    snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
+        addr = buildings.iloc[idx]["PrimaryAddress"] if has_address else None
+        snapped_edge, dist_ft = _snap_house_to_edge(graph_proj, point, addr)
 
-        # Fallback to nearest edge globally
-        if snapped_edge is None:
-            res = ox.nearest_edges(graph, X=point.x, Y=point.y)
-            snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
+        if dist_ft <= max_distance_ft:
+            kept_edges.append(snapped_edge)
+            kept_indices.append(idx)
 
-        edge_ids.append(snapped_edge)
-
-    return edge_ids
+    filtered_buildings = buildings.iloc[kept_indices].copy()
+    return kept_edges, filtered_buildings
 
 
 def _get_closer_endpoint(graph: nx.MultiGraph, edge: RoadEdge, exit_node: int) -> Optional[int]:
@@ -795,7 +828,7 @@ def main() -> None:
     exit_node = find_exit_node(graph)
 
     print("Snapping house locations to nearest road edges...")
-    house_edges = get_house_edges(graph, buildings)
+    house_edges, kept_buildings = get_house_edges(graph, buildings)
 
     print("Running traffic simulation...")
     simulate_traffic(graph, house_edges, exit_node)
@@ -816,7 +849,7 @@ def main() -> None:
     print("Saving house connection visualization to output/house_connections.png...")
     plot_house_connections(
         graph,
-        buildings,
+        kept_buildings,
         house_edges,
         os.path.join("output", "house_connections.png"),
     )

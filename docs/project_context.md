@@ -55,10 +55,12 @@ these steps:
 5. **Exit Node Identification**: Finds the exit node at the intersection of
    Gold Key Road and Log Tavern Road by scanning for a node incident to edges for
    both street names.
-6. **Address Snapping**: Snaps each address point to the road network edges. It first
+6. **Address Snapping & Filtering**: Snaps each address point to the road network edges. It first
    tries to snap the point to a road segment located on a matching normalized street
    name. If no candidate edges exist for that street name, it falls back to snapping
-   to the closest edge on the entire graph.
+   to the closest edge on the entire graph. Houses whose snapped distance to the road
+   network exceeds 500 feet are considered spatial outliers (captured due to buffered
+   boundary query limits) and are excluded from the simulation and output visualizations.
 7. **Traffic Routing**: Simulates one outbound trip and one inbound trip (adding
    `2` to traffic volume) per household. The trip is routed from the endpoint node
    of the snapped edge that is closer to the exit node, and both the home edge and

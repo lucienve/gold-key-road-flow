@@ -256,7 +256,9 @@ def test_get_house_edges_empty() -> None:
     """
     graph = nx.MultiGraph()
     buildings = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-    assert not get_house_edges(graph, buildings)
+    edge_ids, filtered_b = get_house_edges(graph, buildings)
+    assert not edge_ids
+    assert filtered_b.empty
 
 
 def test_get_house_edges_snapping() -> None:
@@ -286,8 +288,9 @@ def test_get_house_edges_snapping() -> None:
         crs="EPSG:4326"
     )
 
-    edge_ids = get_house_edges(graph, buildings)
+    edge_ids, filtered_b = get_house_edges(graph, buildings)
     assert edge_ids in ([RoadEdge(1, 2, 0)], [RoadEdge(2, 1, 0)])
+    assert len(filtered_b) == 1
 
     # Another house with an unknown street should fall back to the closest edge (2-3)
     buildings_fallback = gpd.GeoDataFrame(
@@ -295,8 +298,32 @@ def test_get_house_edges_snapping() -> None:
         geometry=[house_pos],
         crs="EPSG:4326"
     )
-    edge_ids_fallback = get_house_edges(graph, buildings_fallback)
+    edge_ids_fallback, filtered_b_fallback = get_house_edges(graph, buildings_fallback)
     assert edge_ids_fallback in ([RoadEdge(2, 3, 0)], [RoadEdge(3, 2, 0)])
+    assert len(filtered_b_fallback) == 1
+
+
+def test_get_house_edges_distance_filtering() -> None:
+    """
+    Test that get_house_edges filters out houses that snap too far away.
+    """
+    graph = nx.MultiGraph()
+    graph.graph["crs"] = "EPSG:4326"
+    graph.add_node(1, x=-74.9380, y=41.3060)
+    graph.add_node(2, x=-74.9382, y=41.3065)
+    graph.add_edge(1, 2, key=0, name="Gold Key Road")
+
+    # A mock house point very far away (approx 0.1 degrees / 6 miles away)
+    far_house = Point(-74.8382, 41.3065)
+    buildings = gpd.GeoDataFrame(
+        [{"PrimaryAddress": "155 Gold Key Road"}],
+        geometry=[far_house],
+        crs="EPSG:4326"
+    )
+
+    edge_ids, filtered_b = get_house_edges(graph, buildings, max_distance_ft=500.0)
+    assert not edge_ids
+    assert filtered_b.empty
 
 
 def test_remove_closed_roads() -> None:
