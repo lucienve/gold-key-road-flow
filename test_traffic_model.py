@@ -21,6 +21,7 @@ from traffic_model import (
     get_house_edges,
     remove_closed_roads,
     plot_house_connections,
+    plot_traffic_heatmap,
     RoadEdge,
 )
 
@@ -373,6 +374,24 @@ def test_plot_house_connections(tmp_path: Path) -> None:
 
     filename = tmp_path / "house_connections.png"
     plot_house_connections(graph, buildings, house_edges, str(filename))
+
+    assert filename.exists()
+    assert filename.stat().st_size > 0
+
+
+def test_plot_traffic_heatmap(tmp_path: Path) -> None:
+    """
+    Test generating the traffic heatmap visualization.
+    """
+    graph = nx.MultiGraph()
+    graph.graph["crs"] = "EPSG:4326"
+    # Create simple road segment
+    graph.add_node(1, x=-74.9380, y=41.3060)
+    graph.add_node(2, x=-74.9382, y=41.3065)
+    graph.add_edge(1, 2, key=0, name="Gold Key Road", traffic_volume=10)
+
+    filename = tmp_path / "traffic_map.png"
+    plot_traffic_heatmap(graph, str(filename))
 
     assert filename.exists()
     assert filename.stat().st_size > 0

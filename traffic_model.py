@@ -8,6 +8,7 @@ trips from homes to the neighborhood exit.
 from typing import List, Tuple, Any, Optional, NamedTuple
 import csv
 import json
+import math
 import os
 import re
 import requests
@@ -597,22 +598,30 @@ def plot_traffic_heatmap(graph: nx.MultiGraph, filename: str) -> None:
     # Project to UTM to ensure correct aspect ratio and north-up conformal orientation
     graph_proj = ox.project_graph(graph)
 
+    # Find max volume to normalize logarithmically
+    max_volume = 0.0
+    for _, _, data in graph_proj.edges(data=True):
+        vol = float(data.get("traffic_volume", 0))
+        max_volume = max(max_volume, vol)
+
     edge_colors: List[Any] = []
     edge_widths: List[float] = []
     colormap = matplotlib.colormaps["plasma"]
 
     for _, _, data in graph_proj.edges(data=True):
-        rel_t = float(data.get("relative_traffic", 0.0))
+        vol = float(data.get("traffic_volume", 0))
         color: Any
-        if rel_t == 0.0:
+        if vol == 0.0:
             # Slate-grey for zero-travel roads
             color = (0.22, 0.25, 0.3, 1.0)
             width = 0.8
         else:
+            # Logarithmic scaling to highlight secondary/tertiary roads
+            log_rel_t = math.log1p(vol) / math.log1p(max_volume) if max_volume > 0 else 0.0
             # Shift colormap input range to [0.2, 1.0] to avoid dark colors
-            color = colormap(0.2 + 0.8 * rel_t)
-            # Scale linewidth from 1.2 to 6.0 based on relative traffic
-            width = 1.2 + 4.8 * rel_t
+            color = colormap(0.2 + 0.8 * log_rel_t)
+            # Scale linewidth from 1.2 to 6.0 based on logarithmic relative traffic
+            width = 1.2 + 4.8 * log_rel_t
 
         edge_widths.append(width)
         edge_colors.append(color)

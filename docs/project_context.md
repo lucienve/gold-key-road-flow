@@ -71,7 +71,8 @@ these steps:
    - `traffic_volumes.csv`: Structured CSV showing road edge node pairs, street
      name, traffic count, and relative traffic score.
    - `traffic_map.png`: Heatmap plot using the `plasma` colormap (varying width
-     and color) over a slate-grey background to represent relative traffic.
+     and color) scaled logarithmically over a slate-grey background to represent
+     traffic levels, highlighting low-to-mid volume roads.
    - `house_connections.png`: Visualization showing address point coordinates
      connected by white dashed lines directly to the snapped positions on the road edges.
 
