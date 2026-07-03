@@ -601,19 +601,25 @@ def _build_connection_lines(
     lines = []
 
     for idx, geom in enumerate(points):
-        if idx >= len(house_edges):
-            break
         u, v, key = house_edges[idx]
+
+        # Order-agnostic check in projected graph
+        found_u, found_v = None, None
         if graph_proj.has_edge(u, v, key):
-            edge_data = graph_proj.edges[u, v, key]
+            found_u, found_v = u, v
+        elif graph_proj.has_edge(v, u, key):
+            found_u, found_v = v, u
+
+        if found_u is not None and found_v is not None:
+            edge_data = graph_proj.edges[found_u, found_v, key]
 
             # Retrieve or construct edge geometry
             if "geometry" in edge_data:
                 edge_geom = edge_data["geometry"]
             else:
                 edge_geom = LineString([
-                    (graph_proj.nodes[u]["x"], graph_proj.nodes[u]["y"]),
-                    (graph_proj.nodes[v]["x"], graph_proj.nodes[v]["y"])
+                    (graph_proj.nodes[found_u]["x"], graph_proj.nodes[found_u]["y"]),
+                    (graph_proj.nodes[found_v]["x"], graph_proj.nodes[found_v]["y"])
                 ])
 
             # Project point onto edge to get the nearest point on the road segment
