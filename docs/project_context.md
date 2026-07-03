@@ -17,10 +17,10 @@ To ensure that the exit node (which lies on the boundary) is not cropped out, a 
 - **Exit Intersection**: The intersection of Gold Key Road and Log Tavern Road. Found dynamically by locating a node that connects to both:
   - an edge with "gold key" in its name attribute
   - an edge with "log tavern" in its name attribute
-- **Snapping**: House coordinates (Point geometries) are snapped to road network edges `(u, v, key)` based on their street address to prevent incorrect routing near parallel roads or intersections. Suffixes (e.g. `DR` -> `DRIVE`, `RD` -> `ROAD`) are normalized for both address points and OpenStreetMap edges. The point is snapped to the nearest edge on the matching street; if no street match is found, it falls back to the nearest edge on the entire graph. If the input data contains Polygon geometries (like OSM building footprints), centroids are calculated prior to snapping.
+- **Snapping**: House coordinates (Point geometries) are snapped to road network edges represented by the `RoadEdge` NamedTuple `(u, v, key)` based on their street address to prevent incorrect routing near parallel roads or intersections. Suffixes (e.g. `DR` -> `DRIVE`, `RD` -> `ROAD`) are normalized for both address points and OpenStreetMap edges. The point is snapped to the nearest edge on the matching street; if no street match is found, it falls back to the nearest edge on the entire graph. If the input data contains Polygon geometries (like OSM building footprints), centroids are calculated prior to snapping.
 
 ### Routing Algorithm
-- Residents travel from the endpoint of their snapped edge closer to the neighborhood exit node (evaluated by finding the endpoint with the shorter physical path to the exit).
+- Residents travel from the endpoint of their snapped `RoadEdge` closer to the neighborhood exit node (evaluated by finding the endpoint with the shorter physical path to the exit).
 - Dijkstra's shortest-path algorithm (`networkx.shortest_path`) is used for routing from the chosen endpoint.
 - Parallel edges (MultiGraph structure) are resolved by selecting the edge with the shortest physical length.
 - Traffic volume is incremented by 2 (1 trip out, 1 trip in) on both the snapped home street edge itself and each edge in the shortest path.
@@ -29,7 +29,7 @@ To ensure that the exit node (which lies on the boundary) is not cropped out, a 
 - Traffic volume is normalized to relative volume: $volume / max\_volume$ (0.0 to 1.0).
 - Output products:
   - `output/traffic_map.png`: Heatmap visualization of relative traffic.
-  - `output/house_connections.png`: Map visualization showing house locations (points/squares) and their snapped connection paths directly to the nearest point on the road segment geometry (using order-agnostic edge lookups to handle OSMnx cast to directed graphs).
+  - `output/house_connections.png`: Map visualization showing house locations (points/squares) and their snapped connection paths directly to the nearest point on the road segment geometry (using `ConnectionLinesResult` and order-agnostic edge lookups to handle OSMnx cast to directed graphs).
   - `output/traffic_volumes.csv`: Detailed CSV showing traffic volume and relative traffic per road segment.
 
 ## Code Flow & Component Analysis

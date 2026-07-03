@@ -5,7 +5,7 @@ This script calculates relative traffic volumes on road segments by routing
 trips from homes to the neighborhood exit.
 """
 
-from typing import List, Tuple, Any, Optional
+from typing import List, Tuple, Any, Optional, NamedTuple
 import csv
 import json
 import os
@@ -18,6 +18,24 @@ import osmnx as ox
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
+
+
+class RoadEdge(NamedTuple):
+    """
+    NamedTuple representing a snapped road segment in the network.
+    """
+    u: int
+    v: int
+    key: int
+
+
+class ConnectionLinesResult(NamedTuple):
+    """
+    NamedTuple representing the output of _build_connection_lines.
+    """
+    points: List[Any]
+    lines: List[Tuple[Tuple[float, float], Tuple[float, float]]]
+
 
 
 # Suffix normalization dictionary for mapping address street endings to OSM style
@@ -302,7 +320,7 @@ def find_exit_node(graph: nx.MultiGraph) -> int:
 
 def find_matching_street_edges(
     graph: nx.MultiGraph, street_name: str
-) -> List[Tuple[int, int, int]]:
+) -> List[RoadEdge]:
     """
     Finds all edges in the graph matching the given street name.
 
@@ -311,7 +329,7 @@ def find_matching_street_edges(
         street_name: The street name to match.
 
     Returns:
-        A list of edge tuples (u, v, key) matching the street name.
+        A list of RoadEdge NamedTuples matching the street name.
     """
     norm_s = normalize_street_name(street_name)
     norm_s_ns = normalize_street_name_no_space(street_name)
@@ -331,7 +349,7 @@ def find_matching_street_edges(
             norm_osm_ns = normalize_street_name_no_space(name)
 
             if norm_s == norm_osm or norm_s_ns == norm_osm_ns:
-                exact_edges.append((int(u), int(v), int(key)))
+                exact_edges.append(RoadEdge(int(u), int(v), int(key)))
                 break
             if (
                 norm_s in norm_osm
@@ -339,7 +357,7 @@ def find_matching_street_edges(
                 or norm_s_ns in norm_osm_ns
                 or norm_osm_ns in norm_s_ns
             ):
-                partial_edges.append((int(u), int(v), int(key)))
+                partial_edges.append(RoadEdge(int(u), int(v), int(key)))
                 break
 
     return exact_edges if exact_edges else partial_edges
@@ -347,7 +365,7 @@ def find_matching_street_edges(
 
 def get_house_edges(
     graph: nx.MultiGraph, buildings: gpd.GeoDataFrame
-) -> List[Tuple[int, int, int]]:
+) -> List[RoadEdge]:
     """
     Calculates building centroids or uses point geometries and snaps them
     to graph edges. If 'PrimaryAddress' is present, snaps to edges associated
@@ -358,7 +376,7 @@ def get_house_edges(
         buildings: GeoDataFrame of building footprints or address points.
 
     Returns:
-        List of snapped edge IDs (u, v, key) corresponding to each house.
+        List of snapped RoadEdge NamedTuples corresponding to each house.
     """
     if buildings.empty:
         return []
@@ -373,7 +391,7 @@ def get_house_edges(
             .tolist()
         )
 
-    edge_ids: List[Tuple[int, int, int]] = []
+    edge_ids: List[RoadEdge] = []
     has_address = "PrimaryAddress" in buildings.columns
 
     for idx, point in enumerate(points):
@@ -386,36 +404,36 @@ def get_house_edges(
                 if candidates:
                     sub_graph = graph.edge_subgraph(candidates)
                     res = ox.nearest_edges(sub_graph, X=point.x, Y=point.y)
-                    snapped_edge = (int(res[0]), int(res[1]), int(res[2]))
+                    snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
 
         # Fallback to nearest edge globally
         if snapped_edge is None:
             res = ox.nearest_edges(graph, X=point.x, Y=point.y)
-            snapped_edge = (int(res[0]), int(res[1]), int(res[2]))
+            snapped_edge = RoadEdge(int(res[0]), int(res[1]), int(res[2]))
 
         edge_ids.append(snapped_edge)
 
     return edge_ids
 
 
-def _get_closer_endpoint(graph: nx.MultiGraph, u: int, v: int, exit_node: int) -> Optional[int]:
+def _get_closer_endpoint(graph: nx.MultiGraph, edge: RoadEdge, exit_node: int) -> Optional[int]:
     """
-    Finds which of the two endpoints u or v is closer to the exit node.
+    Finds which of the two endpoints of a RoadEdge (u or v) is closer to the exit node.
     Returns None if both are unreachable.
     """
     try:
-        dist_u = nx.shortest_path_length(graph, source=u, target=exit_node, weight="length")
+        dist_u = nx.shortest_path_length(graph, source=edge.u, target=exit_node, weight="length")
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         dist_u = float("inf")
 
     try:
-        dist_v = nx.shortest_path_length(graph, source=v, target=exit_node, weight="length")
+        dist_v = nx.shortest_path_length(graph, source=edge.v, target=exit_node, weight="length")
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         dist_v = float("inf")
 
     if dist_u == float("inf") and dist_v == float("inf"):
         return None
-    return u if dist_u <= dist_v else v
+    return edge.u if dist_u <= dist_v else edge.v
 
 
 def _find_shortest_edge_key(edges_between: Any) -> Any:
@@ -433,7 +451,7 @@ def _find_shortest_edge_key(edges_between: Any) -> Any:
 
 
 def simulate_traffic(
-    graph: nx.MultiGraph, house_edges: List[Tuple[int, int, int]], exit_node: int
+    graph: nx.MultiGraph, house_edges: List[RoadEdge], exit_node: int
 ) -> None:
     """
     Runs routing from each house's snapped edge to the exit node
@@ -441,7 +459,7 @@ def simulate_traffic(
 
     Args:
         graph: The road network graph.
-        house_edges: List of snapped house edge IDs (u, v, key).
+        house_edges: List of snapped house RoadEdge NamedTuples.
         exit_node: The exit node ID.
     """
     # Initialize traffic_volume to 0 for all edges
@@ -449,8 +467,8 @@ def simulate_traffic(
         data["traffic_volume"] = 0
 
     # Route and aggregate traffic
-    for u, v, key in house_edges:
-        source_node = _get_closer_endpoint(graph, u, v, exit_node)
+    for edge in house_edges:
+        source_node = _get_closer_endpoint(graph, edge, exit_node)
         if source_node is None:
             continue
 
@@ -462,7 +480,7 @@ def simulate_traffic(
             continue
 
         # Increment traffic volume by 2 for the home edge itself
-        graph[u][v][key]["traffic_volume"] += 2
+        graph[edge.u][edge.v][edge.key]["traffic_volume"] += 2
 
         # Increment traffic volume by 2 for each edge in the shortest path
         for node_a, node_b in zip(path[:-1], path[1:]):
@@ -582,36 +600,36 @@ def plot_traffic_heatmap(graph: nx.MultiGraph, filename: str) -> None:
 
 def _build_connection_lines(
     points: List[Any],
-    house_edges: List[Tuple[int, int, int]],
+    house_edges: List[RoadEdge],
     graph_proj: nx.MultiGraph,
-) -> Tuple[List[Any], List[Tuple[Tuple[float, float], Tuple[float, float]]]]:
+) -> ConnectionLinesResult:
     """
     Builds segment coordinate pairs for house connection lines, projecting each
     house point onto the nearest point on its snapped road segment.
 
     Args:
         points: List of Shapely points representing house locations.
-        house_edges: List of snapped edge tuples (u, v, key).
+        house_edges: List of snapped RoadEdge NamedTuples.
         graph_proj: Projected road network graph.
 
     Returns:
-        A tuple containing the list of points and connection lines coordinate pairs.
+        A ConnectionLinesResult NamedTuple containing the list of points and connection lines.
     """
     filtered_points = []
     lines = []
 
     for idx, geom in enumerate(points):
-        u, v, key = house_edges[idx]
+        edge = house_edges[idx]
 
         # Order-agnostic check in projected graph
         found_u, found_v = None, None
-        if graph_proj.has_edge(u, v, key):
-            found_u, found_v = u, v
-        elif graph_proj.has_edge(v, u, key):
-            found_u, found_v = v, u
+        if graph_proj.has_edge(edge.u, edge.v, edge.key):
+            found_u, found_v = edge.u, edge.v
+        elif graph_proj.has_edge(edge.v, edge.u, edge.key):
+            found_u, found_v = edge.v, edge.u
 
         if found_u is not None and found_v is not None:
-            edge_data = graph_proj.edges[found_u, found_v, key]
+            edge_data = graph_proj.edges[found_u, found_v, edge.key]
 
             # Retrieve or construct edge geometry
             if "geometry" in edge_data:
@@ -627,13 +645,13 @@ def _build_connection_lines(
             lines.append(((geom.x, geom.y), (snapped_pt.x, snapped_pt.y)))
             filtered_points.append(geom)
 
-    return filtered_points, lines
+    return ConnectionLinesResult(filtered_points, lines)
 
 
 def plot_house_connections(
     graph: nx.MultiGraph,
     buildings: gpd.GeoDataFrame,
-    house_edges: List[Tuple[int, int, int]],
+    house_edges: List[RoadEdge],
     filename: str,
 ) -> None:
     """
@@ -643,7 +661,7 @@ def plot_house_connections(
     Args:
         graph: The road network graph.
         buildings: GeoDataFrame containing the house address points.
-        house_edges: List of snapped edge tuples (u, v, key) corresponding to each house.
+        house_edges: List of snapped RoadEdge NamedTuples corresponding to each house.
         filename: Destination image filepath.
     """
     if buildings.empty or not house_edges:
@@ -674,12 +692,12 @@ def plot_house_connections(
         points = buildings_proj.geometry.centroid.tolist()
 
     # Build connection lines between each house and its snapped road segment
-    filtered_points, lines = _build_connection_lines(points, house_edges, graph_proj)
+    result = _build_connection_lines(points, house_edges, graph_proj)
 
-    if lines:
+    if result.lines:
         ax.add_collection(
             LineCollection(
-                lines,
+                result.lines,
                 colors="#ffffff",
                 linestyles="--",
                 linewidths=0.5,
@@ -689,10 +707,10 @@ def plot_house_connections(
         )
 
     # Plot houses as small squares/rectangles
-    if filtered_points:
+    if result.points:
         ax.scatter(
-            [pt.x for pt in filtered_points],
-            [pt.y for pt in filtered_points],
+            [pt.x for pt in result.points],
+            [pt.y for pt in result.points],
             color="#ff6b6b",  # Vibrant coral/red
             s=8,
             marker="s",
