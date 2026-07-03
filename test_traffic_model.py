@@ -18,7 +18,7 @@ from traffic_model import (
     load_house_locations,
     normalize_street_name,
     extract_street_from_address,
-    get_house_nodes,
+    get_house_edges,
     remove_closed_roads,
     plot_house_connections,
 )
@@ -99,8 +99,8 @@ def test_simulate_traffic_single_path() -> None:
     graph.add_edge(1, 2, key=0, length=10.0)
     graph.add_edge(2, 3, key=0, length=15.0)
 
-    # Run traffic simulation with 1 house at Node 1
-    simulate_traffic(graph, house_nodes=[1], exit_node=3)
+    # Run traffic simulation with 1 house on segment 1-2
+    simulate_traffic(graph, house_edges=[(1, 2, 0)], exit_node=3)
 
     # Each edge along the path (1-2 and 2-3) should have traffic_volume of 2 (1 out, 1 in)
     assert graph[1][2][0]["traffic_volume"] == 2
@@ -122,7 +122,7 @@ def test_simulate_traffic_parallel_edges() -> None:
     graph.add_edge(1, 2, key=0, length=5.0)
     graph.add_edge(1, 2, key=1, length=10.0)
 
-    simulate_traffic(graph, house_nodes=[1], exit_node=2)
+    simulate_traffic(graph, house_edges=[(1, 2, 0)], exit_node=2)
 
     # Traffic should route along the shorter edge (key=0)
     assert graph[1][2][0]["traffic_volume"] == 2
@@ -249,18 +249,18 @@ def test_extract_street_from_address() -> None:
     assert extract_street_from_address("") == ""
 
 
-def test_get_house_nodes_empty() -> None:
+def test_get_house_edges_empty() -> None:
     """
-    Test get_house_nodes on an empty GeoDataFrame.
+    Test get_house_edges on an empty GeoDataFrame.
     """
     graph = nx.MultiGraph()
     buildings = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-    assert not get_house_nodes(graph, buildings)
+    assert not get_house_edges(graph, buildings)
 
 
-def test_get_house_nodes_snapping() -> None:
+def test_get_house_edges_snapping() -> None:
     """
-    Test that get_house_nodes snaps to the street associated with the address.
+    Test that get_house_edges snaps to the street associated with the address.
     """
     # Create a small graph:
     # Node 1 connects to Node 2 (Gold Key Road)
@@ -275,8 +275,8 @@ def test_get_house_nodes_snapping() -> None:
     graph.add_edge(1, 2, key=0, name="Gold Key Road")
     graph.add_edge(2, 3, key=0, name="Pom Pom Court")
 
-    # House is closer to Node 3 (Pom Pom Court) but addressed to "155 Gold Key Road"
-    # Point coords: close to Node 3, but we snap to Node 2 (Gold Key Road)
+    # House is closer to Node 3 / Pom Pom Court edge (2-3) but addressed to "155 Gold Key Road"
+    # Point coords: close to Node 3, but we snap to Gold Key Road edge (1-2)
     house_pos = Point(-74.9382, 41.3074)
 
     buildings = gpd.GeoDataFrame(
@@ -285,17 +285,17 @@ def test_get_house_nodes_snapping() -> None:
         crs="EPSG:4326"
     )
 
-    node_ids = get_house_nodes(graph, buildings)
-    assert node_ids == [2]
+    edge_ids = get_house_edges(graph, buildings)
+    assert edge_ids in ([(1, 2, 0)], [(2, 1, 0)])
 
-    # Another house with an unknown street should fall back to the closest node (Node 3)
+    # Another house with an unknown street should fall back to the closest edge (2-3)
     buildings_fallback = gpd.GeoDataFrame(
         [{"PrimaryAddress": "100 Unknown Rd"}],
         geometry=[house_pos],
         crs="EPSG:4326"
     )
-    node_ids_fallback = get_house_nodes(graph, buildings_fallback)
-    assert node_ids_fallback == [3]
+    edge_ids_fallback = get_house_edges(graph, buildings_fallback)
+    assert edge_ids_fallback in ([(2, 3, 0)], [(3, 2, 0)])
 
 
 def test_remove_closed_roads() -> None:
@@ -341,10 +341,10 @@ def test_plot_house_connections(tmp_path: Path) -> None:
         geometry=[Point(-74.9382, 41.3065)],
         crs="EPSG:4326"
     )
-    house_nodes = [2]
+    house_edges = [(1, 2, 0)]
 
     filename = tmp_path / "house_connections.png"
-    plot_house_connections(graph, buildings, house_nodes, str(filename))
+    plot_house_connections(graph, buildings, house_edges, str(filename))
 
     assert filename.exists()
     assert filename.stat().st_size > 0
