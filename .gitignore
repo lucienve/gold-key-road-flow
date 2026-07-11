@@ -20,7 +20,3 @@ cache/
 
 # Editor backups
 *~
-*.swp
-
-# Simulation outputs
-output/
