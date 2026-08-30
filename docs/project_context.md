@@ -80,49 +80,51 @@ these steps:
 
 ### Development Environment Setup
 
-1. **Create and Activate a Virtual Environment**:
+1. **Install UV and Sync Environment**:
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+   uv sync --all-groups
    ```
-
-2. **Install Dependencies**:
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
+   This automatically installs the required Python version (3.14+), sets up `.venv`, and installs all dependencies and development tools.
 
 ### Execution
 
 - **Run the Simulation**:
   To execute the traffic simulation and generate output files:
   ```bash
-  python traffic_model.py
+  uv run python traffic_model.py
   ```
   *Note: The script queries external APIs (OSMnx and Pike County GIS) and will
   cache the fetched data under `cache/` to speed up subsequent runs.*
 
 - **Run Unit Tests**:
-  To execute the test suite (uses `pytest` configured in `pytest.ini`):
+  To execute the test suite:
   ```bash
-  pytest
+  uv run pytest
   ```
 
 - **Run Type Checker**:
-  To run static type checking (uses `mypy` configured in `mypy.ini`):
+  To run static type checking (configured in `pyproject.toml`):
   ```bash
-  mypy traffic_model.py test_traffic_model.py
+  uv run mypy traffic_model.py test_traffic_model.py
   ```
 
 - **Run Linter**:
   To run code style linting (uses `pylint` standard checks):
   ```bash
-  pylint traffic_model.py test_traffic_model.py
+  uv run pylint traffic_model.py test_traffic_model.py
+  ```
+
+- **Format Code**:
+  To format Python code using Black:
+  ```bash
+  uv run black .
   ```
 
 ## Project Structure
-- [requirements.txt](../requirements.txt): Production requirements.
-- [requirements-dev.txt](../requirements-dev.txt): Development requirements.
-- [pytest.ini](../pytest.ini): Unit test configurations.
+- [pyproject.toml](../pyproject.toml): Project metadata, dependencies, dependency groups, and tool configurations.
+- [uv.lock](../uv.lock): Locked dependency versions for reproducible environments.
+- [.python-version](../.python-version): Pinned Python version (3.14).
 - [traffic_model.py](../traffic_model.py): Core simulation and visualization code.
 - [test_traffic_model.py](../test_traffic_model.py): Unit test suite.
 - `output/`: Folder containing the generated output products (git ignored).
+

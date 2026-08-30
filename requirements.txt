@@ -1,7 +1,0 @@
-osmnx>=2.0.0
-networkx
-geopandas
-shapely
-matplotlib
-scipy
-scikit-learn
