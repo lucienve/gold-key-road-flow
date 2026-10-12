@@ -10,5 +10,5 @@ updates:
         patterns:
           - "*"
         update-types:
-         - "minor"
+          - "minor"
           - "patch"
